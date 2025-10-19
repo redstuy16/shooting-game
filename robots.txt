@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://2dshooting.netlify.app/sitemap.xml
