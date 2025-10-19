@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>미니 1대1 FPS (2D) — PvE/PvP</title>
+<style>
+  body { margin:0; padding:0; background:#222; color:#eee; font-family:'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow:hidden; }
+  #gameCanvas { background:#333; display:block; margin:0 auto; border:3px solid #555; }
+  #ui { width:800px; margin:10px auto 0; display:flex; gap:8px; align-items:center; justify-content:space-between; }
+  #leftUi { display:flex; gap:8px; align-items:center; }
+  button { background:#ff6f91; border:none; padding:8px 12px; color:#fff; font-weight:700; border-radius:6px; cursor:pointer; user-select:none; }
+  select { background:#2b2b2b; color:#eee; border:1px solid #555; padding:6px 8px; border-radius:6px; }
+  #instructionsModal { position:fixed; inset:0; background:rgba(0,0,0,0.8); display:none; justify-content:center; align-items:center; color:#fff; }
+  #instructionsContent { background:#444; padding:20px 30px; border-radius:10px; max-width:600px; text-align:left; line-height:1.5; }
+  #closeInstructions { background:#ff4757; margin-top:15px; }
+
+  /* 조작키 패널 */
+  #controls { width:800px; margin:8px auto 0; display:grid; gap:10px; grid-template-columns:1fr 1fr; }
+  .panel { background:#2b2b2b; border:2px solid #444; border-radius:10px; padding:10px; }
+  .panel h3 { margin:0 0 8px 0; font-size:16px; color:#ccc; }
+  .keys { display:grid; grid-template-columns:repeat(5, 1fr); gap:6px; }
+  .keybtn { background:#3a3a3a; border:1px solid #555; border-radius:8px; padding:10px 6px; font-weight:700; cursor:pointer; text-align:center; }
+  .keybtn:hover { filter:brightness(1.1); }
+  .keybtn.active { background:#58adff; border-color:#9bd1ff; color:#001827; }
+  .keybtn.blink { background:#5bffb1; color:#103828; border-color:#93ffd0; }
+  .keybtn.blink.active { background:#2cf594; }
+  .keybtn.disabled { background:#555 !important; border-color:#666 !important; color:#999 !important; cursor:not-allowed !important; }
+  .legend { font-size:12px; color:#aaa; margin-top:6px; }
+  .blinkSlot { display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .cd { font-size:12px; color:#aaa; height:14px; line-height:14px; }
+  .hint { font-size:12px; color:#9bd1ff; text-align:center; }
+
+  /* AI 상태 패널 */
+  #aiPanel { display:none; background:#2b2b2b; border:2px solid #444; border-radius:10px; padding:10px; }
+  #aiPanel h3 { margin:0 0 6px 0; font-size:16px; color:#ccc; }
+  #aiInfo { font-size:13px; color:#bbb; line-height:1.4; }
+</style>
+</head>
+<body>
+
+<div id="ui">
+  <div id="leftUi">
+    <label for="modeSelect">모드:</label>
+    <select id="modeSelect">
+      <option value="PVE">1인 (PvE, P2=AI)</option>
+      <option value="PVP" selected>2인 (PvP)</option>
+    </select>
+    <button id="applyMode">모드 적용/리셋</button>
+  </div>
+  <button id="showInstructions">조작법 보기</button>
+</div>
+
+<canvas id="gameCanvas" width="800" height="500"></canvas>
+
+<!-- 조작키 패널 -->
+<div id="controls">
+  <div class="panel" id="panelP1">
+    <h3>플레이어 1 (파란색) — WASD 이동, 점멸키: Q / E / Left Shift / Space</h3>
+    <div class="keys">
+      <div></div>
+      <button class="keybtn" data-key="w">W</button>
+      <div></div>
+      <div class="blinkSlot">
+        <button class="keybtn blink" id="btnP1Blink">점멸</button>
+        <div class="cd" id="p1BlinkCd">준비완료</div>
+        <div class="hint">Q·E·LShift·Space</div>
+      </div>
+      <div></div>
+
+      <button class="keybtn" data-key="a">A</button>
+      <button class="keybtn" data-key="s">S</button>
+      <button class="keybtn" data-key="d">D</button>
+      <div class="legend" style="grid-column: span 2;">클릭/홀드로 이동 입력</div>
+      <div class="legend" style="grid-column: span 2;">점멸 버튼은 클릭 시 1회 발동</div>
+    </div>
+  </div>
+
+  <div class="panel" id="panelP2">
+    <h3>플레이어 2 (빨간색) — 방향키 이동, 점멸키: M / Slash(/) / Right Shift / Enter / Right Ctrl</h3>
+    <div class="keys">
+      <div></div>
+      <button class="keybtn" data-key="arrowup">↑</button>
+      <div></div>
+      <div class="blinkSlot">
+        <button class="keybtn blink" id="btnP2Blink">점멸</button>
+        <div class="cd" id="p2BlinkCd">준비완료</div>
+        <div class="hint">M·/·RShift·Enter·RCtrl</div>
+      </div>
+      <div></div>
+
+      <button class="keybtn" data-key="arrowleft">←</button>
+      <button class="keybtn" data-key="arrowdown">↓</button>
+      <button class="keybtn" data-key="arrowright">→</button>
+      <div class="legend" style="grid-column: span 2;">클릭/홀드로 이동 입력</div>
+      <div class="legend" style="grid-column: span 2;">점멸 버튼은 클릭 시 1회 발동</div>
+    </div>
+  </div>
+</div>
+
+<!-- AI 상태 패널 (1인 모드에서만 표시) -->
+<div id="aiPanel" class="panel" style="width:800px; margin:8px auto;">
+  <h3>AI 플레이어 (빨간색)</h3>
+  <div id="aiInfo">상태: 대기</div>
+</div>
+
+<div id="instructionsModal">
+  <div id="instructionsContent">
+    <h2>조작법</h2>
+    <ul>
+      <li><b>모드:</b> 1인(PvE)=P2가 AI / 2인(PvP)=두 명 플레이</li>
+      <li><b>P1(파란):</b> W/A/S/D 이동, 점멸: <b>Q / E / Left Shift / Space</b></li>
+      <li><b>P2(빨강):</b> ←/↑/→/↓ 이동, 점멸: <b>M / Slash(/) / Right Shift / Enter / Right Ctrl</b></li>
+      <li>총알 자동 발사(카운트다운 종료 후 시작)</li>
+      <li>라운드 시작 3-2-1: 이동만 가능, 발사/점멸 불가</li>
+      <li>점멸: 현재 누르는 방향으로 <b>자신 크기의 2배</b> 즉시 이동(대각선 가능). 사용 후 <b>라운드 2회</b> 대기</li>
+    </ul>
+    <button id="closeInstructions">닫기</button>
+  </div>
+</div>
+
+<script>
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const width = canvas.width, height = canvas.height;
+
+  // === 모드 상태 ===
+  let mode = 'PVP'; // 'PVE' | 'PVP'
+  const modeSelect = document.getElementById('modeSelect');
+  const applyModeBtn = document.getElementById('applyMode');
+
+  // === 카운트다운 ===
+  let isCountingDown = true;
+  let countdownValue = 3;
+  let countdownTimer = null;
+
+  // === 입력 ===
+  const keys = {};
+  const blinkBindings = {
+    p1: { keys: ['q','e'], codes: ['ShiftLeft','Space'] },
+    p2: { keys: ['m','/'], codes: ['ShiftRight','Enter','ControlRight'] }
+  };
+
+  // === 플레이어/총알 ===
+  class Player {
+    constructor(x, y, color, controls, isAI=false) {
+      this.x = x; this.y = y;
+      this.color = color;
+      this.size = 30;
+      this.speed = 4;
+      this.score = 0;
+      this.controls = controls;
+      this.bullets = [];
+      this.fireInterval = 15;
+      this.cooldown = 0;
+      this.blinkCooldownRounds = 0;
+      this.isAI = isAI;
+      this.lastMoveDir = {x: (color==='blue'?1:-1), y:0}; // 방향키 없을 때 점멸 참고
+    }
+    move(keymap) {
+      let moved = false;
+      if (keymap[this.controls.up] && this.y - this.speed > 0) { this.y -= this.speed; moved = true; this.lastMoveDir={x:0,y:-1}; }
+      if (keymap[this.controls.down] && this.y + this.speed + this.size < height) { this.y += this.speed; moved = true; this.lastMoveDir={x:0,y:1}; }
+      if (keymap[this.controls.left] && this.x - this.speed > 0) { this.x -= this.speed; moved = true; this.lastMoveDir={x:-1,y:0}; }
+      if (keymap[this.controls.right] && this.x + this.speed + this.size < width) { this.x += this.speed; moved = true; this.lastMoveDir={x:1,y:0}; }
+      return moved;
+    }
+    autoShoot() {
+      if (isCountingDown) return;
+      if (this.cooldown <= 0) this.shoot(); else this.cooldown--;
+    }
+    shoot() {
+      const dir = this.color === 'blue' ? 1 : -1;
+      const bulletX = this.color === 'blue' ? this.x + this.size : this.x;
+      const bulletY = this.y + this.size / 2;
+      this.bullets.push(new Bullet(bulletX, bulletY, dir));
+      this.cooldown = this.fireInterval;
+    }
+    blink(keymap) {
+      if (isCountingDown) return;
+      if (this.blinkCooldownRounds > 0) return;
+
+      let dx = 0, dy = 0;
+      if (keymap[this.controls.right]) dx += 1;
+      if (keymap[this.controls.left])  dx -= 1;
+      if (keymap[this.controls.down])  dy += 1;
+      if (keymap[this.controls.up])    dy -= 1;
+
+      if (dx === 0 && dy === 0) { dx = this.lastMoveDir.x; dy = this.lastMoveDir.y; }
+      if (dx === 0 && dy === 0) return;
+
+      const len = Math.hypot(dx, dy);
+      dx /= len; dy /= len;
+
+      const distance = this.size * 2;
+      let nx = this.x + Math.round(dx * distance);
+      let ny = this.y + Math.round(dy * distance);
+      nx = Math.max(0, Math.min(nx, width  - this.size));
+      ny = Math.max(0, Math.min(ny, height - this.size));
+      this.x = nx; this.y = ny;
+
+      this.blinkCooldownRounds = 2;
+      updateControlVisuals();
+    }
+    updateBullets(opponent) {
+      for (let i = this.bullets.length - 1; i >= 0; i--) {
+        const b = this.bullets[i];
+        b.move();
+        if (b.x < 0 || b.x > width) this.bullets.splice(i, 1);
+        else if (b.collidesWith(opponent)) {
+          this.score++;
+          this.bullets.splice(i, 1);
+          endRound();
+          break;
+        }
+      }
+    }
+    draw() {
+      ctx.fillStyle = this.color;
+      ctx.fillRect(this.x, this.y, this.size, this.size);
+      this.bullets.forEach(b => b.draw());
+    }
+  }
+
+  class Bullet {
+    constructor(x, y, dir) { this.x = x; this.y = y; this.radius = 6; this.speed = 8 * dir; }
+    move() { this.x += this.speed; }
+    collidesWith(player) {
+      return (this.x > player.x && this.x < player.x + player.size) &&
+             (this.y > player.y && this.y < player.y + player.size);
+    }
+    draw() { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2); ctx.fill(); }
+  }
+
+  // === 전역 객체 ===
+  const player1 = new Player(50, height/2 - 15, 'blue', { up:'w', down:'s', left:'a', right:'d' }, false);
+  const player2 = new Player(width - 80, height/2 - 15, 'red', { up:'arrowup', down:'arrowdown', left:'arrowleft', right:'arrowright' }, false);
+
+  // === 키보드 입력 ===
+  window.addEventListener('keydown', e => {
+    const k = e.key.toLowerCase();
+    const c = e.code;
+    keys[k] = true;
+    if (e.repeat) { updateControlVisuals(); return; }
+
+    // 점멸: P1
+    if (blinkBindings.p1.keys.includes(k) || blinkBindings.p1.codes.includes(c)) {
+      player1.blink(keys);
+    }
+    // 점멸: P2 (PvP에서만 키보드로 수동 점멸)
+    if (mode==='PVP' && (blinkBindings.p2.keys.includes(k) || blinkBindings.p2.codes.includes(c))) {
+      player2.blink(keys);
+    }
+    updateControlVisuals();
+  });
+  window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; updateControlVisuals(); });
+
+  // === 패널 버튼 바인딩 (이동키) ===
+  function bindHoldButton(btn, keyName) {
+    const setDown = () => { keys[keyName] = true; updateControlVisuals(); };
+    const setUp   = () => { keys[keyName] = false; updateControlVisuals(); };
+    btn.addEventListener('mousedown', setDown);
+    btn.addEventListener('mouseup', setUp);
+    btn.addEventListener('mouseleave', setUp);
+    btn.addEventListener('touchstart', (e) => { e.preventDefault(); setDown(); }, {passive:false});
+    btn.addEventListener('touchend',   (e) => { e.preventDefault(); setUp(); },   {passive:false});
+    btn.addEventListener('touchcancel',(e) => { e.preventDefault(); setUp(); },   {passive:false});
+  }
+  document.querySelectorAll('#panelP1 .keybtn[data-key]').forEach(btn => bindHoldButton(btn, btn.dataset.key));
+  document.querySelectorAll('#panelP2 .keybtn[data-key]').forEach(btn => bindHoldButton(btn, btn.dataset.key));
+
+  // 점멸 버튼 (패널)
+  const btnP1Blink = document.getElementById('btnP1Blink');
+  const btnP2Blink = document.getElementById('btnP2Blink');
+  btnP1Blink.addEventListener('click', () => { if (player1.blinkCooldownRounds === 0 && !isCountingDown) player1.blink(keys); updateControlVisuals(); });
+  btnP2Blink.addEventListener('click', () => {
+    if (mode==='PVP' && player2.blinkCooldownRounds === 0 && !isCountingDown) player2.blink(keys);
+    updateControlVisuals();
+  });
+
+  // === AI 입력 맵 ===
+  const aiKeys = { 'arrowup':false, 'arrowdown':false, 'arrowleft':false, 'arrowright':false };
+  function clearAIKeys() { aiKeys.arrowup=aiKeys.arrowdown=aiKeys.arrowleft=aiKeys.arrowright=false; }
+
+  // === AI 로직 (간단) ===
+  function updateAI(self, opponent) {
+    clearAIKeys();
+    if (isCountingDown) { setAIInfo('카운트다운'); return; }
+
+    const selfCenterY = self.y + self.size/2;
+    const oppCenterY  = opponent.y + opponent.size/2;
+    const dx = (opponent.x + opponent.size/2) - (self.x + self.size/2);
+    const dy = oppCenterY - selfCenterY;
+    const distX = Math.abs(dx), distY = Math.abs(dy);
+
+    // 1) 수직 정렬 우선
+    if (distY > 6) {
+      if (dy < 0) aiKeys.arrowup = true; else aiKeys.arrowdown = true;
+    }
+
+    // 2) 거리 관리: 너무 멀면 접근, 너무 가까우면 후퇴
+    const desiredMin = 140, desiredMax = 240;
+    if (distX > desiredMax) {
+      // 접근 (빨강은 보통 왼쪽으로 이동해 맞추기 쉬움)
+      if (dx < 0) aiKeys.arrowleft = true; else aiKeys.arrowright = true;
+      setAIInfo('접근');
+    } else if (distX < desiredMin) {
+      // 후퇴
+      if (dx < 0) aiKeys.arrowright = true; else aiKeys.arrowleft = true;
+      setAIInfo('후퇴');
+    } else {
+      setAIInfo('교전 유지');
+    }
+
+    // 3) 탄 회피 점멸: 상대 총알이 좌→우로 자신에게 접근 중인지 확인
+    const danger = incomingBullet(opponent.bullets, self);
+    if (danger && self.blinkCooldownRounds === 0) {
+      // 위/아래로 짧게 점멸(빈 공간 우선)
+      if (self.y > self.size*2) { aiKeys.arrowup = true; self.blink(aiKeys); setAIInfo('회피 점멸↑'); }
+      else if (self.y < height - self.size*3) { aiKeys.arrowdown = true; self.blink(aiKeys); setAIInfo('회피 점멸↓'); }
+    } else {
+      // 4) 공격 점멸(간헐적으로 간격 빠르게 좁히기)
+      if (self.blinkCooldownRounds === 0 && distX > 260) {
+        if (dx < 0) { aiKeys.arrowleft = true; self.blink(aiKeys); setAIInfo('돌진 점멸←'); }
+        else        { aiKeys.arrowright = true; self.blink(aiKeys); setAIInfo('돌진 점멸→'); }
+      }
+    }
+  }
+  function incomingBullet(bullets, target) {
+    for (const b of bullets) {
+      // 파란쪽 총알은 +x, 빨강쪽 총알은 -x. AI는 빨강이므로 파란(P1)의 총알만 위험.
+      // 여기서는 호출 시 아규먼트로 opponent.bullets만 주므로 방향 체크 불필요.
+      const yClose = Math.abs((target.y + target.size/2) - b.y) < target.size; // 수직 근접
+      const xAhead = (b.x - target.x); // +면 총알이 오른쪽에 있음
+      if (yClose && xAhead > -20 && xAhead < 140) return true;
+    }
+    return false;
+  }
+
+  // === 라운드 흐름 ===
+  function resetPositions() {
+    player1.x = 50; player1.y = height/2 - player1.size/2;
+    player2.x = width - 80; player2.y = height/2 - player2.size/2;
+    player1.bullets = []; player2.bullets = [];
+    player1.cooldown = Math.floor(Math.random() * player1.fireInterval);
+    player2.cooldown = Math.floor(Math.random() * player2.fireInterval);
+  }
+  function decrementBlinkRoundCooldowns() {
+    if (player1.blinkCooldownRounds > 0) player1.blinkCooldownRounds--;
+    if (player2.blinkCooldownRounds > 0) player2.blinkCooldownRounds--;
+    updateControlVisuals();
+  }
+  function startCountdown() {
+    isCountingDown = true; countdownValue = 3;
+    if (countdownTimer) clearInterval(countdownTimer);
+    countdownTimer = setInterval(() => {
+      countdownValue--;
+      if (countdownValue <= 0) {
+        clearInterval(countdownTimer); countdownTimer = null;
+        isCountingDown = false; updateControlVisuals();
+      }
+    }, 1000);
+  }
+  function endRound() {
+    decrementBlinkRoundCooldowns();
+    resetPositions();
+    startCountdown();
+  }
+
+  // === HUD ===
+  function drawScores() {
+    ctx.font = '20px Arial';
+    ctx.fillStyle = 'blue';
+    const p1Blink = player1.blinkCooldownRounds === 0 ? '준비완료' : `대기 ${player1.blinkCooldownRounds}`;
+    ctx.fillText(`P1(파란): ${player1.score}  | 점멸: ${p1Blink}`, 20, 30);
+    ctx.fillStyle = 'red';
+    const p2Blink = player2.blinkCooldownRounds === 0 ? '준비완료' : `대기 ${player2.blinkCooldownRounds}`;
+    const rightText = (mode==='PVE' ? `AI(빨강)` : `P2(빨강)`);
+    ctx.fillText(`${rightText}: ${player2.score}  | 점멸: ${p2Blink}`, width - 360, 30);
+  }
+  function drawCountdown() {
+    if (!isCountingDown) return;
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = '#fff'; ctx.font = '72px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(String(countdownValue), width/2, height/2);
+    ctx.restore();
+  }
+
+  // === 메인 루프 ===
+  function gameLoop() {
+    ctx.clearRect(0, 0, width, height);
+
+    // AI 업데이트
+    if (mode==='PVE') updateAI(player2, player1);
+
+    // 이동
+    player1.move(keys);
+    if (mode==='PVE') player2.move(aiKeys); else player2.move(keys);
+
+    // 자동 발사
+    player1.autoShoot();
+    player2.autoShoot();
+
+    // 총알 업데이트/충돌
+    player1.updateBullets(player2);
+    player2.updateBullets(player1);
+
+    // 렌더
+    player1.draw(); player2.draw();
+    drawScores(); drawCountdown();
+
+    requestAnimationFrame(gameLoop);
+  }
+
+  // === 모드 적용/리셋 ===
+  function applyMode() {
+    mode = modeSelect.value;
+    // PvE면 P2를 AI로
+    player2.isAI = (mode==='PVE');
+
+    // 패널 표시 전환
+    document.getElementById('panelP2').style.display = (mode==='PVE') ? 'none' : 'block';
+    document.getElementById('aiPanel').style.display  = (mode==='PVE') ? 'block' : 'none';
+
+    // 점수/포지션/카운트 리셋
+    player1.score = 0; player2.score = 0;
+    resetPositions(); startCountdown();
+    updateControlVisuals();
+  }
+
+  // === AI UI 상태 ===
+  const aiInfoEl = document.getElementById('aiInfo');
+  function setAIInfo(text){ aiInfoEl.textContent = '상태: ' + text; }
+
+  // === 초기화 ===
+  resetPositions();
+  startCountdown();
+  gameLoop();
+  applyModeBtn.addEventListener('click', applyMode);
+
+  // 조작법 모달
+  const modal = document.getElementById('instructionsModal');
+  const btnShow = document.getElementById('showInstructions');
+  const btnClose = document.getElementById('closeInstructions');
+  btnShow.addEventListener('click', () => { modal.style.display = 'flex'; });
+  btnClose.addEventListener('click', () => { modal.style.display = 'none'; });
+
+  // === 패널/쿨타임 표시 ===
+  function updateControlVisuals() {
+    document.querySelectorAll('.keybtn[data-key]').forEach(btn => {
+      const k = btn.dataset.key;
+      if (keys[k]) btn.classList.add('active'); else btn.classList.remove('active');
+    });
+
+    const p1CdEl = document.getElementById('p1BlinkCd');
+    const p2CdEl = document.getElementById('p2BlinkCd');
+
+    // P1
+    if (player1.blinkCooldownRounds > 0) {
+      btnP1Blink.classList.add('disabled'); p1CdEl.textContent = `쿨다운: ${player1.blinkCooldownRounds}라운드`;
+    } else if (isCountingDown) {
+      btnP1Blink.classList.add('disabled'); p1CdEl.textContent = '대기(카운트중)';
+    } else {
+      btnP1Blink.classList.remove('disabled'); p1CdEl.textContent = '준비완료';
+    }
+
+    // P2 패널은 PvP에서만 보임
+    if (mode==='PVP') {
+      if (player2.blinkCooldownRounds > 0) {
+        btnP2Blink.classList.add('disabled'); p2CdEl.textContent = `쿨다운: ${player2.blinkCooldownRounds}라운드`;
+      } else if (isCountingDown) {
+        btnP2Blink.classList.add('disabled'); p2CdEl.textContent = '대기(카운트중)';
+      } else {
+        btnP2Blink.classList.remove('disabled'); p2CdEl.textContent = '준비완료';
+      }
+    }
+  }
+  updateControlVisuals();
+</script>
+
+</body>
+</html>
