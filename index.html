@@ -271,7 +271,7 @@ const blinkBindings={p1:{keys:['q','e'],codes:['ShiftLeft','Space']},p2:{keys:['
 class Player{
   constructor(x,y,color,controls){
     this.x=x;this.y=y;this.color=color;this.size=30;this.speed=4;this.score=0;this.controls=controls;
-    this.bullets=[];this.fireInterval=20;this.cooldown=0;this.blinkCooldownRounds=0;this.lastMoveDir={x:(color==='blue'?1:-1),y:0};
+    this.bullets=[];this.fireInterval=18;this.cooldown=0;this.blinkCooldownRounds=0;this.lastMoveDir={x:(color==='blue'?1:-1),y:0};
   }
   move(k){
     if(k[this.controls.up]&&this.y-this.speed>0){this.y-=this.speed;this.lastMoveDir={x:0,y:-1}}
@@ -436,6 +436,7 @@ function updateControlVisuals(){
 </script>
 </body>
 </html>
+
 
 
 
